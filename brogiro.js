@@ -1,14 +1,14 @@
 (function () {
   'use strict';
 
-  var VERSION = '1.2.0';
+  var VERSION = '1.2.1';
 
   if (window.brogiro_plugin) return;
   window.brogiro_plugin = true;
 
   var CFG = {
     api: 'https://playcdnfb.top',
-    frame: 'https://cdn.jsdelivr.net/gh/gotretjakov-sudo/lampa-plugins@main/frame.html#',
+    frame: 'https://gotretjakov-sudo.github.io/lampa-plugins/frame.html#',
     domain: 'brogiro.cfd',
     addDomain: true,
     timeout: 8000,
