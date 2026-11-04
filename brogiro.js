@@ -45,26 +45,30 @@
       }
 
       out.push({
-        title: name + (CFG.needRuIp.test(name) ? ' (RU IP)' : ''),
-        subtitle: [voice, p.quality ? p.quality : ''].filter(Boolean).join(' · '),
+        title: name + (voice ? ' · ' + voice : '') + (CFG.needRuIp.test(name) ? ' (RU IP)' : ''),
         quality: parseInt(p.quality) || 0,
-        src: u,
-        url: CFG.frame + encodeURIComponent(u)
+        url: CFG.frame + encodeURIComponent(u),
+        balancer: 'brogiro'
       });
     });
 
     return out.sort(function (a, b) { return b.quality - a.quality; });
   }
 
-  function search(movie, call) {
+  function search(movie, call, cancel) {
     var kp = movie.kinopoisk_id || movie.kp_id || '';
     var imdb = movie.imdb_id || '';
     var title = movie.title || movie.name || '';
     var orig = movie.original_title || movie.original_name || '';
     var year = (movie.release_date || movie.first_air_date || '').slice(0, 4);
     var key = kp || imdb || (title + year);
+    var stopped = false;
 
-    if (cache[key] && Date.now() - cache[key].at < CFG.cacheMs) return call(cache[key].data);
+    if (cancel) cancel(function () { stopped = true; });
+
+    if (cache[key] && Date.now() - cache[key].at < CFG.cacheMs) {
+      return call(cache[key].data);
+    }
 
     var queries = [];
     if (kp) queries.push('kinopoisk=' + encodeURIComponent(kp));
@@ -74,105 +78,41 @@
 
     var i = 0;
 
+    function finish(items) {
+      if (stopped) return;
+      if (items.length) cache[key] = { at: Date.now(), data: items };
+      call(items);
+    }
+
     function next() {
-      if (i >= queries.length) return call([]);
+      if (stopped) return;
+      if (i >= queries.length) return finish([]);
+
       getJson(CFG.api + '/api/players?' + queries[i++], function (json) {
         var items = map(json);
-        if (!items.length) return next();
-        cache[key] = { at: Date.now(), data: items };
-        call(items);
+        if (items.length) return finish(items);
+        next();
       }, next);
     }
 
     next();
   }
 
-  function play(item, movie) {
-    var name = (movie.title || movie.name || '') + ' — ' + item.title;
-    var enabled = Lampa.Controller.enabled().name;
-
-    if (Lampa.Platform && Lampa.Platform.is && Lampa.Platform.is('android') && Lampa.Android && Lampa.Android.openPlayer && Lampa.Storage.field('player') !== 'inner') {
-      Lampa.Android.openPlayer(item.url, { title: name });
-      return;
-    }
-
-    if (Lampa.Iframe && Lampa.Iframe.show) {
-      Lampa.Iframe.show({
-        url: item.url,
-        onBack: function () {
-          Lampa.Iframe.close && Lampa.Iframe.close();
-          Lampa.Controller.toggle(enabled);
-        }
-      });
-      return;
-    }
-
-    window.open(item.url, '_blank');
-  }
-
-  function open(movie) {
-    Lampa.Loading.start(function () {
-      Lampa.Loading.stop();
-    });
-
-    search(movie, function (items) {
-      Lampa.Loading.stop();
-
-      if (!items.length) {
-        Lampa.Noty.show('Brogiro: ничего не найдено');
-        return;
-      }
-
-      var enabled = Lampa.Controller.enabled().name;
-
-      Lampa.Select.show({
-        title: 'Brogiro',
-        items: items,
-        onSelect: function (item) {
-          Lampa.Controller.toggle(enabled);
-          play(item, movie);
-        },
-        onBack: function () {
-          Lampa.Controller.toggle(enabled);
-        }
-      });
-    });
-  }
-
-  function addButton(e) {
-    var render = e.object.activity.render();
-    if (render.find('.view--brogiro').length) return;
-
-    var btn = $('<div class="full-start__button selector view--brogiro">' + ICON + '<span>Brogiro</span></div>');
-
-    btn.on('hover:enter', function () {
-      open(e.data.movie);
-    });
-
-    var anchor = render.find('.view--torrent');
-    if (anchor.length) anchor.after(btn);
-    else render.find('.full-start-new__buttons, .full-start__buttons').first().append(btn);
-  }
-
-  var manifest = {
-    type: 'video',
-    version: '1.1.0',
-    name: 'Brogiro',
-    description: 'Онлайн-просмотр через балансеры Kinobox (iframe-плеер)',
-    component: 'brogiro',
-    onContextMenu: function () {
-      return { name: 'Смотреть в Brogiro', description: 'Балансеры Kinobox' };
-    },
-    onContextLauch: function (object) {
-      open(object);
-    }
-  };
-
   function start() {
-    Lampa.Manifest.plugins = manifest;
+    if (window.brogiro_ready) return;
+    window.brogiro_ready = true;
 
-    Lampa.Listener.follow('full', function (e) {
-      if (e.type === 'complite') addButton(e);
+    if (!Lampa.Source || !Lampa.Source.add) {
+      console.log('[brogiro] нет Lampa.Source — старая версия Lampa');
+      return;
+    }
+
+    Lampa.Source.add({
+      id: 'brogiro',
+      name: 'Brogiro',
+      weight: 95,
+      onSearch: search,
+      onCancel: function () {}
     });
 
     console.log('[brogiro] загружен');
