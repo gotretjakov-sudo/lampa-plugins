@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '1.3.1';
+  var VERSION = '1.3.2';
 
   if (window.brogiro_plugin) return;
   window.brogiro_plugin = true;
@@ -127,10 +127,17 @@
     }
 
     if (Lampa.Iframe && Lampa.Iframe.show) {
+      // В CSS Lampa у .iframe__window стоит pointer-events:none — без этого клики мышью не доходят до плеера
+      var win = Lampa.Iframe.render ? Lampa.Iframe.render().find('iframe') : $();
+      win.css('pointer-events', 'auto')
+        .attr('allow', 'autoplay; fullscreen; encrypted-media; picture-in-picture')
+        .attr('allowfullscreen', 'true');
+
       Lampa.Iframe.show({
         url: item.url,
         onBack: function () {
           // Lampa.Iframe.close() сам вызывает onBack — повторно close не вызываем
+          win.css('pointer-events', '');
           Lampa.Controller.toggle(ctrl);
         }
       });
