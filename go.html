@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Brogiro</title>
+<style>
+  :root { --bg:#111; --fg:#eee; --key:#2a2a2a; --focus:#f5b301; --dim:#888; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font-family:system-ui,Arial,sans-serif; }
+  body { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2vh; padding:16px; }
+  h1 { margin:0; font-size:5vh; font-weight:600; color:var(--dim); }
+  #id { font-size:12vh; min-height:14vh; letter-spacing:.1em; font-variant-numeric:tabular-nums; }
+  #id:empty::before { content:'ID фильма'; color:#444; letter-spacing:0; }
+  .pad { display:grid; grid-template-columns:repeat(3, 14vh); gap:1.5vh; }
+  button { font:inherit; font-size:6vh; height:11vh; border:0; border-radius:1.5vh; background:var(--key); color:var(--fg); outline:none; cursor:pointer; }
+  button:focus, button:hover { background:var(--focus); color:#000; transform:scale(1.06); }
+  .go { background:#1f6f3a; }
+  .recent { display:flex; gap:1.5vh; flex-wrap:wrap; justify-content:center; min-height:8vh; }
+  .recent button { font-size:3.5vh; height:7vh; padding:0 2.5vh; }
+  .hint { color:var(--dim); font-size:2.5vh; text-align:center; }
+</style>
+</head>
+<body>
+  <h1>Brogiro</h1>
+  <div id="id"></div>
+  <div class="pad" id="pad"></div>
+  <div class="recent" id="recent"></div>
+  <div class="hint">Цифры — с пульта или кнопками · OK — открыть · ⌫ — стереть</div>
+
+<script>
+(function () {
+  var URL_TPL = 'https://brogiro.cfd/film/{id}/';
+  var MAX_RECENT = 6;
+  var out = document.getElementById('id');
+  var pad = document.getElementById('pad');
+  var recentBox = document.getElementById('recent');
+
+  function load() { try { return JSON.parse(localStorage.getItem('brogiro_recent') || '[]'); } catch (e) { return []; } }
+  function save(list) { try { localStorage.setItem('brogiro_recent', JSON.stringify(list)); } catch (e) {} }
+
+  function open(id) {
+    id = String(id || out.textContent).replace(/\D/g, '');
+    if (!id) return;
+    var list = load().filter(function (x) { return x !== id; });
+    list.unshift(id);
+    save(list.slice(0, MAX_RECENT));
+    location.href = URL_TPL.replace('{id}', id);
+  }
+
+  function type(d) { if (out.textContent.length < 9) out.textContent += d; }
+  function erase() { out.textContent = out.textContent.slice(0, -1); }
+
+  // ?507 или ?id=507 — сразу открыть
+  var q = location.search.replace(/^\?(id=)?/, '');
+  if (/^\d+$/.test(q)) return open(q);
+
+  ['1','2','3','4','5','6','7','8','9','⌫','0','▶'].forEach(function (k) {
+    var b = document.createElement('button');
+    b.textContent = k;
+    if (k === '▶') b.className = 'go';
+    b.onclick = function () { k === '⌫' ? erase() : k === '▶' ? open() : type(k); };
+    pad.appendChild(b);
+  });
+
+  load().forEach(function (id) {
+    var b = document.createElement('button');
+    b.textContent = id;
+    b.onclick = function () { open(id); };
+    recentBox.appendChild(b);
+  });
+
+  function goBtn() { return pad.querySelector('.go'); }
+
+  // Навигация стрелками пульта между всеми кнопками
+  function buttons() { return Array.prototype.slice.call(document.querySelectorAll('button')); }
+  function move(dx, dy) {
+    var all = buttons(), cur = document.activeElement;
+    if (all.indexOf(cur) < 0) return all[0].focus();
+    var r = cur.getBoundingClientRect(), cx = r.left + r.width / 2, cy = r.top + r.height / 2, best = null, bestD = Infinity;
+    all.forEach(function (b) {
+      if (b === cur) return;
+      var s = b.getBoundingClientRect(), x = s.left + s.width / 2 - cx, y = s.top + s.height / 2 - cy;
+      if ((dx && x * dx <= 0) || (dy && y * dy <= 0)) return;
+      var d = dx ? Math.abs(x) + Math.abs(y) * 3 : Math.abs(y) + Math.abs(x) * 3;
+      if (d < bestD) { bestD = d; best = b; }
+    });
+    if (best) best.focus();
+  }
+
+  document.addEventListener('keydown', function (e) {
+    var k = e.keyCode;
+    if (k >= 48 && k <= 57) { type(String(k - 48)); goBtn().focus(); e.preventDefault(); }
+    else if (k >= 96 && k <= 105) { type(String(k - 96)); goBtn().focus(); e.preventDefault(); }
+    else if (k === 37) { move(-1, 0); e.preventDefault(); }
+    else if (k === 39) { move(1, 0); e.preventDefault(); }
+    else if (k === 38) { move(0, -1); e.preventDefault(); }
+    else if (k === 40) { move(0, 1); e.preventDefault(); }
+    else if (k === 8 || k === 46) { erase(); e.preventDefault(); }
+    else if ((k === 13 || k === 23) && document.activeElement === document.body) { open(); e.preventDefault(); }
+  });
+
+  pad.children[0].focus();
+})();
+</script>
+</body>
+</html>
