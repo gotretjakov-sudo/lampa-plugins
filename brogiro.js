@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '1.3.0';
+  var VERSION = '1.3.1';
 
   if (window.brogiro_plugin) return;
   window.brogiro_plugin = true;
@@ -130,7 +130,7 @@
       Lampa.Iframe.show({
         url: item.url,
         onBack: function () {
-          if (Lampa.Iframe.close) Lampa.Iframe.close();
+          // Lampa.Iframe.close() сам вызывает onBack — повторно close не вызываем
           Lampa.Controller.toggle(ctrl);
         }
       });
