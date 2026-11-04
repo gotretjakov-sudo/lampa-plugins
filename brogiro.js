@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '1.2.1';
+  var VERSION = '1.3.0';
 
   if (window.brogiro_plugin) return;
   window.brogiro_plugin = true;
@@ -36,6 +36,16 @@
     net.silent(url, ok, no);
   }
 
+  function link(u) {
+    u = String(u || '');
+    if (u.indexOf('//') === 0) u = 'https:' + u;
+    if (!/^https?:/.test(u)) return '';
+    if (CFG.addDomain && CFG.domain && !/[?&]domain=/.test(u)) {
+      u += (u.indexOf('?') > -1 ? '&' : '?') + 'domain=' + CFG.domain;
+    }
+    return CFG.frame + encodeURIComponent(u);
+  }
+
   function map(json) {
     var list = Array.isArray(json) ? json : (json && (json.players || json.data)) || [];
     var out = [];
@@ -43,24 +53,27 @@
 
     list.forEach(function (p) {
       if (!p) return;
-      var u = p.iframeUrl || p.iframe_url || p.url || p.iframe || '';
-      if (u.indexOf('//') === 0) u = 'https:' + u;
-      if (!/^https?:/.test(u) || seen[u]) return;
-      seen[u] = 1;
+      var raw = p.iframeUrl || p.iframe_url || p.url || p.iframe || '';
+      var url = link(raw);
+      if (!url || seen[raw]) return;
+      seen[raw] = 1;
 
       var name = String(p.name || p.type || p.id || 'источник');
-      var tr = p.translation;
-      var voice = tr ? (typeof tr === 'object' ? (tr.name || tr.title || '') : String(tr)) : '';
 
-      if (CFG.addDomain && CFG.domain && !/[?&]domain=/.test(u)) {
-        u += (u.indexOf('?') > -1 ? '&' : '?') + 'domain=' + CFG.domain;
-      }
+      var voices = (p.translations || []).map(function (t) {
+        return {
+          title: t.name || t.title || 'Перевод',
+          subtitle: t.quality || '',
+          url: link(t.iframeUrl || t.iframe_url || t.url)
+        };
+      }).filter(function (t) { return t.url; });
 
       out.push({
-        title: name + (CFG.needRuIp.test(name) ? ' (RU IP)' : ''),
-        subtitle: [voice, p.quality || ''].filter(Boolean).join(' · '),
+        title: name + (CFG.needRuIp.test(name + ' ' + raw) ? ' (RU IP)' : ''),
+        subtitle: voices.length ? 'Озвучек: ' + voices.length : '',
         quality: parseInt(p.quality) || 0,
-        url: CFG.frame + encodeURIComponent(u)
+        url: url,
+        voices: voices
       });
     });
 
@@ -139,18 +152,51 @@
 
       var ctrl = Lampa.Controller.enabled().name;
 
-      Lampa.Select.show({
-        title: 'Brogiro',
-        items: items,
-        onSelect: function (item) {
-          Lampa.Controller.toggle(ctrl);
-          play(item, movie);
-        },
-        onBack: function () {
-          Lampa.Controller.toggle(ctrl);
-        }
-      });
+      function balancers() {
+        Lampa.Select.show({
+          title: 'Brogiro',
+          items: items,
+          onSelect: function (item) {
+            if (item.voices && item.voices.length > 1) return voices(item);
+            Lampa.Controller.toggle(ctrl);
+            play(item.voices && item.voices[0] ? item.voices[0] : item, movie);
+          },
+          onBack: function () {
+            Lampa.Controller.toggle(ctrl);
+          }
+        });
+      }
+
+      function voices(item) {
+        Lampa.Select.show({
+          title: item.title,
+          items: [{ title: 'Все озвучки (выбор в плеере)', url: item.url }].concat(item.voices),
+          onSelect: function (v) {
+            Lampa.Controller.toggle(ctrl);
+            play({ title: item.title + (v.subtitle !== undefined ? ' · ' + v.title : ''), url: v.url }, movie);
+          },
+          onBack: balancers
+        });
+      }
+
+      balancers();
     });
+  }
+
+  function fixExtensionName() {
+    var api = Lampa.Plugins && Lampa.Plugins.get && Lampa.Plugins.save ? Lampa.Plugins : null;
+    var list = api ? api.get() : Lampa.Storage.get('plugins', '[]');
+    if (!Array.isArray(list)) return;
+    var changed = false;
+    list.forEach(function (p) {
+      if (p && typeof p === 'object' && /brogiro\.js/i.test(p.url || '') && p.name !== manifest.name) {
+        p.name = manifest.name;
+        p.author = '@gotretjakov';
+        p.descr = manifest.description;
+        changed = true;
+      }
+    });
+    if (changed) api ? api.save() : Lampa.Storage.set('plugins', list);
   }
 
   function addButton(render, movie) {
@@ -190,6 +236,7 @@
 
     // 1. Регистрация в списке видео-плагинов (меню «Онлайн»/«Смотреть»)
     safe('manifest', function () { Lampa.Manifest.plugins = manifest; });
+    safe('name', fixExtensionName);
 
     // 2. Кнопка в карточке
     safe('listener', function () {
