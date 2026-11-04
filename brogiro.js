@@ -1,6 +1,8 @@
 (function () {
   'use strict';
 
+  var VERSION = '1.2.0';
+
   if (window.brogiro_plugin) return;
   window.brogiro_plugin = true;
 
@@ -11,12 +13,22 @@
     addDomain: true,
     timeout: 8000,
     cacheMs: 10 * 60 * 1000,
-    needRuIp: /alloha|stravers|turbo|obrut|veoveo|veo-vo/i
+    needRuIp: /alloha|stravers|turbo|obrut|veoveo|veo-vo/i,
+    debug: true
   };
 
   var cache = {};
-
   var ICON = '<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M8 5v14l11-7z"/></svg>';
+
+  function log(msg) {
+    console.log('[brogiro] ' + msg);
+  }
+
+  function safe(name, fn) {
+    try { fn(); } catch (err) { log(name + ' error: ' + (err && err.message)); }
+  }
+
+  /* ---------- данные ---------- */
 
   function getJson(url, ok, no) {
     var net = new Lampa.Reguest();
@@ -45,30 +57,25 @@
       }
 
       out.push({
-        title: name + (voice ? ' · ' + voice : '') + (CFG.needRuIp.test(name) ? ' (RU IP)' : ''),
+        title: name + (CFG.needRuIp.test(name) ? ' (RU IP)' : ''),
+        subtitle: [voice, p.quality || ''].filter(Boolean).join(' · '),
         quality: parseInt(p.quality) || 0,
-        url: CFG.frame + encodeURIComponent(u),
-        balancer: 'brogiro'
+        url: CFG.frame + encodeURIComponent(u)
       });
     });
 
     return out.sort(function (a, b) { return b.quality - a.quality; });
   }
 
-  function search(movie, call, cancel) {
+  function search(movie, call) {
     var kp = movie.kinopoisk_id || movie.kp_id || '';
     var imdb = movie.imdb_id || '';
     var title = movie.title || movie.name || '';
     var orig = movie.original_title || movie.original_name || '';
     var year = (movie.release_date || movie.first_air_date || '').slice(0, 4);
     var key = kp || imdb || (title + year);
-    var stopped = false;
 
-    if (cancel) cancel(function () { stopped = true; });
-
-    if (cache[key] && Date.now() - cache[key].at < CFG.cacheMs) {
-      return call(cache[key].data);
-    }
+    if (cache[key] && Date.now() - cache[key].at < CFG.cacheMs) return call(cache[key].data);
 
     var queries = [];
     if (kp) queries.push('kinopoisk=' + encodeURIComponent(kp));
@@ -78,48 +85,140 @@
 
     var i = 0;
 
-    function finish(items) {
-      if (stopped) return;
-      if (items.length) cache[key] = { at: Date.now(), data: items };
-      call(items);
-    }
-
     function next() {
-      if (stopped) return;
-      if (i >= queries.length) return finish([]);
-
+      if (i >= queries.length) return call([]);
       getJson(CFG.api + '/api/players?' + queries[i++], function (json) {
         var items = map(json);
-        if (items.length) return finish(items);
+        if (!items.length) return next();
+        cache[key] = { at: Date.now(), data: items };
+        call(items);
+      }, function () {
+        log('запрос не прошёл (сеть/CORS): ' + queries[i - 1]);
         next();
-      }, next);
+      });
     }
 
     next();
   }
 
-  function start() {
-    if (window.brogiro_ready) return;
-    window.brogiro_ready = true;
+  /* ---------- UI ---------- */
 
-    if (!Lampa.Source || !Lampa.Source.add) {
-      console.log('[brogiro] нет Lampa.Source — старая версия Lampa');
+  function play(item, movie) {
+    var name = (movie.title || movie.name || '') + ' — ' + item.title;
+    var ctrl = Lampa.Controller.enabled().name;
+
+    var isAndroid = Lampa.Platform && Lampa.Platform.is && Lampa.Platform.is('android');
+    if (isAndroid && Lampa.Android && Lampa.Android.openPlayer && Lampa.Storage.field('player') !== 'inner') {
+      Lampa.Android.openPlayer(item.url, { title: name });
       return;
     }
 
-    Lampa.Source.add({
-      id: 'brogiro',
-      name: 'Brogiro',
-      weight: 95,
-      onSearch: search,
-      onCancel: function () {}
-    });
+    if (Lampa.Iframe && Lampa.Iframe.show) {
+      Lampa.Iframe.show({
+        url: item.url,
+        onBack: function () {
+          if (Lampa.Iframe.close) Lampa.Iframe.close();
+          Lampa.Controller.toggle(ctrl);
+        }
+      });
+      return;
+    }
 
-    console.log('[brogiro] загружен');
+    window.open(item.url, '_blank');
   }
 
-  if (window.appready) start();
-  else Lampa.Listener.follow('app', function (e) {
-    if (e.type === 'ready') start();
-  });
+  function open(movie) {
+    if (!movie) return Lampa.Noty.show('Brogiro: нет данных карточки');
+
+    Lampa.Loading.start(function () { Lampa.Loading.stop(); });
+
+    search(movie, function (items) {
+      Lampa.Loading.stop();
+
+      if (!items.length) return Lampa.Noty.show('Brogiro: ничего не найдено');
+
+      var ctrl = Lampa.Controller.enabled().name;
+
+      Lampa.Select.show({
+        title: 'Brogiro',
+        items: items,
+        onSelect: function (item) {
+          Lampa.Controller.toggle(ctrl);
+          play(item, movie);
+        },
+        onBack: function () {
+          Lampa.Controller.toggle(ctrl);
+        }
+      });
+    });
+  }
+
+  function addButton(render, movie) {
+    if (!render || !render.find || render.find('.view--brogiro').length) return;
+
+    var btn = $('<div class="full-start__button selector view--brogiro">' + ICON + '<span>Brogiro</span></div>');
+    btn.on('hover:enter', function () { open(movie); });
+
+    var anchor = render.find('.view--torrent, .view--online').last();
+    if (anchor.length) return anchor.after(btn);
+
+    var box = render.find('.full-start-new__buttons, .full-start__buttons').first();
+    if (box.length) return box.append(btn);
+
+    log('контейнер кнопок не найден');
+  }
+
+  /* ---------- регистрация ---------- */
+
+  var manifest = {
+    type: 'video',
+    version: VERSION,
+    name: 'Brogiro',
+    description: 'Онлайн-просмотр через балансеры Kinobox (iframe-плеер)',
+    component: 'brogiro',
+    onContextMenu: function () {
+      return { name: 'Смотреть в Brogiro', description: 'Балансеры Kinobox' };
+    },
+    onContextLauch: function (object) {
+      open(object);
+    }
+  };
+
+  function start() {
+    if (window.brogiro_started) return;
+    window.brogiro_started = true;
+
+    // 1. Регистрация в списке видео-плагинов (меню «Онлайн»/«Смотреть»)
+    safe('manifest', function () { Lampa.Manifest.plugins = manifest; });
+
+    // 2. Кнопка в карточке
+    safe('listener', function () {
+      Lampa.Listener.follow('full', function (e) {
+        if (e.type !== 'complite') return;
+        safe('button', function () {
+          var render = e.object.activity.render();
+          var movie = e.data && e.data.movie;
+          addButton(render, movie);
+          setTimeout(function () { addButton(render, movie); }, 300);
+        });
+      });
+    });
+
+    // 3. Если карточка уже открыта на момент загрузки
+    safe('active', function () {
+      var a = Lampa.Activity.active();
+      if (a && a.component === 'full' && a.activity) addButton(a.activity.render(), a.card);
+    });
+
+    log('загружен v' + VERSION);
+    if (CFG.debug) safe('noty', function () { Lampa.Noty.show('Brogiro v' + VERSION + ' загружен'); });
+  }
+
+  function boot() {
+    if (!window.Lampa || !Lampa.Listener) return setTimeout(boot, 200);
+    if (window.appready) start();
+    else Lampa.Listener.follow('app', function (e) { if (e.type === 'ready') start(); });
+  }
+
+  boot();
 })();
